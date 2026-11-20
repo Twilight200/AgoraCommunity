@@ -1,0 +1,7 @@
+spring:
+  application:
+    name: agora
+  datasource:
+    url: jdbc:mysql://localhost:3307/agora
+    username: agora
+    password: 123456
