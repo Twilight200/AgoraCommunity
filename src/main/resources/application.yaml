@@ -1,7 +1,16 @@
+agora:
+  role: worker
+  id-generator:
+    worker-id: 1
 spring:
   application:
     name: agora
+  flyway:
+    locations: classpath:db/migration
   datasource:
     url: jdbc:mysql://localhost:3307/agora
     username: agora
-    password: 123456
+    password: ${AGORA_DB_PASSWORD}
+    hikari:
+      transaction-isolation: TRANSACTION_READ_COMMITTED
+

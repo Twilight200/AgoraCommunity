@@ -2,16 +2,16 @@ services:
   mysql:
     image: mysql:8.0
     environment:
-      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_ROOT_PASSWORD: ${AGORA_DB_ROOT_PASSWORD}
       MYSQL_DATABASE: agora
       MYSQL_USER: agora
-      MYSQL_PASSWORD: 123456
+      MYSQL_PASSWORD: ${AGORA_DB_PASSWORD}
     ports:
       - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
-      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-uagora", "-p123456" ]
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-uagora", "-p\"$$MYSQL_PASSWORD\"" ]
       interval: 5s
       timeout: 3s
       retries: 20
