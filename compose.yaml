@@ -143,8 +143,68 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+  rmq-namesrv:
+    profiles: [ mq ]
+    image: apache/rocketmq:5.3.2
+    command: sh mqnamesrv
+    ports:
+      - "9876:9876"
+    volumes:
+      - rocketmq_namesrv_logs:/home/rocketmq/logs
+  rmq-broker:
+    profiles: [ mq ]
+    image: apache/rocketmq:5.3.2
+    environment:
+      NAMESRV_ADDR: rmq-namesrv:9876
+    command:
+      - sh
+      - mqbroker
+      - -c
+      - /home/rocketmq/rocketmq-5.3.2/conf/broker.conf
+    ports:
+      - "10909:10909"
+      - "10911:10911"
+      - "10912:10912"
+    volumes:
+      - ./deploy/rocketmq/broker.conf:/home/rocketmq/rocketmq-5.3.2/conf/broker.conf:ro
+      - rocketmq_broker_logs:/home/rocketmq/logs
+      - rocketmq_broker_store:/home/rocketmq/store
+    depends_on:
+      - rmq-namesrv
+  canal:
+    profiles: [ mq ]
+    image:  dyrnq/canal-server:1.1.8-jdk8
+    environment:
+      canal.instance.master.address: mysql:3306
+      canal.instance.dbUsername: canal
+      canal.instance.dbPassword: ${AGORA_CANAL_PASSWORD:?AGORA_CANAL_PASSWORD must be set}
+      canal.instance.connectionCharset: UTF-8
+      canal.instance.tsdb.enable: "true"
+      canal.instance.gtidon: "true"
+      canal.instance.filter.regex: "agora\\..*"
+      canal.destinations: agora
+      canal.serverMode: rocketMQ
+      rocketmq.namesrv.addr: rmq-namesrv:9876
+      canal.mq.topic: canal-binlog
+      canal.mq.partition: "0"
+      canal.mq.flatMessage: "true"
+    ports:
+      - "11111:11111"
+    volumes:
+      - canal_logs:/home/admin/canal-server/logs
+      - ./deploy/canal/canal.properties:/home/admin/canal-server/conf/canal.properties:ro
+      - ./deploy/canal/agora/instance.properties:/home/admin/canal-server/conf/agora/instance.properties:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+      rmq-broker:
+        condition: service_started
 
 volumes:
   mysql_data:
   redis_data:
   mysql_replica_data:
+  rocketmq_namesrv_logs:
+  rocketmq_broker_logs:
+  rocketmq_broker_store:
+  canal_logs:
