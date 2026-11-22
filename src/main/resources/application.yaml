@@ -5,6 +5,9 @@ agora:
 spring:
   application:
     name: agora
+  mvc:
+    problemdetails:
+      enabled: true
   flyway:
     locations: classpath:db/migration
   datasource:
@@ -14,3 +17,12 @@ spring:
     hikari:
       transaction-isolation: TRANSACTION_READ_COMMITTED
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  metrics:
+    tags:
+      application: ${spring.application.name}
+      role: ${agora.role}
