@@ -20,4 +20,11 @@ public interface UserAccountMapper {
         where username = #{username}
     """)
     UserAccountCredential findByUsername(@Param("username") String username);
+
+    @Select("""
+    SELECT trust_level
+    FROM user_account
+    WHERE id = #{userId}
+    """)
+    Integer findTrustLevelById(@Param("userId") long userId);
 }

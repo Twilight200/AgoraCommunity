@@ -1,6 +1,8 @@
 package com.example.agora.identity.internal;
 
 import com.example.agora.identity.api.LoginRequest;
+import com.example.agora.identity.api.QuotaApi;
+import com.example.agora.identity.api.QuotaDecision;
 import com.example.agora.identity.api.RegisterRequest;
 import com.example.agora.platform.api.ApiException;
 import org.junit.jupiter.api.AfterEach;
@@ -8,11 +10,18 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.mysql.MySQLContainer;
+
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -54,6 +63,12 @@ class UserAccountMySqlIntegrationTest {
 
     @Autowired
     private SessionTokenService sessionTokenService;
+
+    @Autowired
+    private QuotaApi quotaApi;
+
+    @Autowired
+    private TransactionTemplate transactionTemplate;
 
     @AfterEach
     void removeTestAccount() {
@@ -183,5 +198,139 @@ class UserAccountMySqlIntegrationTest {
                     assertThat(apiException.getCode())
                             .isEqualTo("IDENTITY_INVALID_SESSION");
                 });
+    }
+
+    @Test
+    void consumesTl0TopicQuotaAndRejectsTheFourthTopic() {
+        userAccountService.register(new RegisterRequest(
+                USERNAME,
+                "correct horse battery staple"
+        ));
+        long userId = userAccountRepository.findByUsername(USERNAME)
+                .orElseThrow()
+                .id();
+
+        assertThat(quotaApi.tryConsumeTopicCreation(userId, false).allowed()).isTrue();
+        assertThat(quotaApi.tryConsumeTopicCreation(userId, false).allowed()).isTrue();
+        assertThat(quotaApi.tryConsumeTopicCreation(userId, false).allowed()).isTrue();
+
+        var rejected = quotaApi.tryConsumeTopicCreation(userId, false);
+
+        assertThat(rejected.allowed()).isFalse();
+        assertThat(rejected.reasonCode()).isEqualTo("IDENTITY_TOPIC_QUOTA_EXCEEDED");
+
+        Integer topicsCreated = jdbcTemplate.queryForObject(
+                """
+                SELECT topics_created
+                FROM user_daily_quota
+                WHERE user_id = ?
+                  AND quota_date = ?
+                """,
+                Integer.class,
+                userId,
+                LocalDate.now(ZoneOffset.UTC)
+        );
+        assertThat(topicsCreated).isEqualTo(3);
+    }
+
+    @Test
+    void rollsBackQuotaWhenThePublishingTransactionFails() {
+        userAccountService.register(new RegisterRequest(
+                USERNAME,
+                "correct horse battery staple"
+        ));
+        long userId = userAccountRepository.findByUsername(USERNAME)
+                .orElseThrow()
+                .id();
+
+        assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(status -> {
+            var decision = quotaApi.tryConsumeTopicCreation(userId, false);
+            assertThat(decision.allowed()).isTrue();
+            throw new IllegalStateException("simulated topic insert failure");
+        }))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("simulated topic insert failure");
+
+        Integer rowCount = jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM user_daily_quota
+                WHERE user_id = ?
+                  AND quota_date = ?
+                """,
+                Integer.class,
+                userId,
+                LocalDate.now(ZoneOffset.UTC)
+        );
+        assertThat(rowCount).isZero();
+    }
+
+    @Test
+    void concurrentRequestsCannotConsumeMoreThanTheLastAvailableTopicQuota()
+            throws Exception {
+        userAccountService.register(new RegisterRequest(
+                USERNAME,
+                "correct horse battery staple"
+        ));
+        long userId = userAccountRepository.findByUsername(USERNAME)
+                .orElseThrow()
+                .id();
+
+        quotaApi.tryConsumeTopicCreation(userId, false);
+        quotaApi.tryConsumeTopicCreation(userId, false);
+
+        var ready = new CountDownLatch(2);
+        var start = new CountDownLatch(1);
+        var executor = Executors.newFixedThreadPool(2);
+
+        try {
+            var first = executor.submit(() -> tryConsumeAfterBarrier(
+                    userId,
+                    ready,
+                    start
+            ));
+            var second = executor.submit(() -> tryConsumeAfterBarrier(
+                    userId,
+                    ready,
+                    start
+            ));
+
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+
+            boolean firstAllowed = first.get(10, TimeUnit.SECONDS).allowed();
+            boolean secondAllowed = second.get(10, TimeUnit.SECONDS).allowed();
+
+            assertThat((firstAllowed ? 1 : 0) + (secondAllowed ? 1 : 0))
+                    .isEqualTo(1);
+        } finally {
+            start.countDown();
+            executor.shutdownNow();
+        }
+
+        Integer topicsCreated = jdbcTemplate.queryForObject(
+                """
+                SELECT topics_created
+                FROM user_daily_quota
+                WHERE user_id = ?
+                  AND quota_date = ?
+                """,
+                Integer.class,
+                userId,
+                LocalDate.now(ZoneOffset.UTC)
+        );
+        assertThat(topicsCreated).isEqualTo(3);
+    }
+
+    private QuotaDecision tryConsumeAfterBarrier(
+            long userId,
+            CountDownLatch ready,
+            CountDownLatch start
+    ) throws InterruptedException {
+        ready.countDown();
+        if (!start.await(5, TimeUnit.SECONDS)) {
+            throw new IllegalStateException("Timed out waiting to start quota request.");
+        }
+        return quotaApi.tryConsumeTopicCreation(userId, false);
     }
 }

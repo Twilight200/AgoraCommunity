@@ -28,4 +28,8 @@ public class UserAccountRepository {
         return Optional.ofNullable(userAccountMapper.findByUsername(name));
     }
 
+    public Optional<Integer> findTrustLevelById(long userId){
+        return Optional.ofNullable(userAccountMapper.findTrustLevelById(userId));
+    }
+
 }
