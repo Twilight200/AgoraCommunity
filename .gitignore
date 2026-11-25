@@ -32,3 +32,8 @@ build/
 
 ### VS Code ###
 .vscode/
+
+
+### perf ###
+/perf/*
+!/perf/*.js
