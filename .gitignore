@@ -37,3 +37,6 @@ build/
 ### perf ###
 /perf/*
 !/perf/*.js
+
+
+AGENTS.md
