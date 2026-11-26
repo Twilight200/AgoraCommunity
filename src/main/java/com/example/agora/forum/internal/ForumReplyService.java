@@ -65,4 +65,34 @@ public class ForumReplyService {
 
         return new CreatedReply(replyId,floor.getAsInt());
     }
+
+    @Transactional
+    public void editReply(long replyId, long userId, int expectedVersion, String content) {
+        if (!replyRepository.updateReplyContent(replyId, userId, expectedVersion, content)) {
+            throw editConflict();
+        }
+        outboxPublisher.record(
+                "REPLY", replyId, "ReplyEdited",
+                Map.of("replyId", replyId, "version", expectedVersion + 1)
+        );
+    }
+
+    @Transactional
+    public void deleteReply(long replyId, long userId, int expectedVersion) {
+        if (!replyRepository.softDeleteReply(replyId, userId, expectedVersion)) {
+            throw editConflict();
+        }
+        outboxPublisher.record(
+                "REPLY", replyId, "ReplyDeleted",
+                Map.of("replyId", replyId, "version", expectedVersion + 1)
+        );
+    }
+
+    private ApiException editConflict() {
+        return new ApiException(
+                HttpStatus.CONFLICT,
+                "FORUM_REPLY_VERSION_CONFLICT",
+                "reply was changed, deleted, or does not belong to the user"
+        );
+    }
 }

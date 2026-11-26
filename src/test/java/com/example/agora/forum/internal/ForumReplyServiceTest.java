@@ -145,4 +145,46 @@ class ForumReplyServiceTest {
                 Map.of("replyId", REPLY_ID)
         );
     }
+
+    @Test
+    void editsReplyWithExpectedVersionAndPublishesEvent() {
+        when(replyRepository.updateReplyContent(REPLY_ID, USER_ID, 0, "edited"))
+                .thenReturn(true);
+
+        service.editReply(REPLY_ID, USER_ID, 0, "edited");
+
+        verify(outboxPublisher).record(
+                "REPLY", REPLY_ID, "ReplyEdited",
+                Map.of("replyId", REPLY_ID, "version", 1)
+        );
+    }
+
+    @Test
+    void rejectsEditWhenVersionIsStale() {
+        when(replyRepository.updateReplyContent(REPLY_ID, USER_ID, 0, "edited"))
+                .thenReturn(false);
+
+        assertThatThrownBy(() -> service.editReply(REPLY_ID, USER_ID, 0, "edited"))
+                .isInstanceOf(ApiException.class)
+                .satisfies(exception -> {
+                    var apiException = (ApiException) exception;
+                    assertThat(apiException.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(apiException.getCode()).isEqualTo("FORUM_REPLY_VERSION_CONFLICT");
+                });
+
+        verifyNoInteractions(outboxPublisher);
+    }
+
+    @Test
+    void softDeletesReplyAndPublishesEvent() {
+        when(replyRepository.softDeleteReply(REPLY_ID, USER_ID, 1))
+                .thenReturn(true);
+
+        service.deleteReply(REPLY_ID, USER_ID, 1);
+
+        verify(outboxPublisher).record(
+                "REPLY", REPLY_ID, "ReplyDeleted",
+                Map.of("replyId", REPLY_ID, "version", 2)
+        );
+    }
 }

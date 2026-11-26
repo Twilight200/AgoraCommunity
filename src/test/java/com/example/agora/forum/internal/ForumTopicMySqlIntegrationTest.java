@@ -50,6 +50,9 @@ class ForumTopicMySqlIntegrationTest {
     @Autowired
     private IdGenerator idGenerator;
 
+    @Autowired
+    private ForumReplyQueryService replyQueryService;
+
     @Container
     static final MySQLContainer MYSQL =
             new MySQLContainer("mysql:8.0.36")
@@ -466,6 +469,241 @@ class ForumTopicMySqlIntegrationTest {
         }
     }
 
+    @Test
+    void editsReplyWithOptimisticVersionAndCreatesOutboxEvent() {
+        createdTopicId = topicService.createTopic(
+                categoryId,
+                userId,
+                "Edit test topic",
+                "Original content"
+        );
 
+        Long replyId = jdbcTemplate.queryForObject(
+                """
+                SELECT id
+                FROM reply
+                WHERE topic_id = ?
+                  AND floor_no = 1
+                """,
+                Long.class,
+                createdTopicId
+        );
+
+        replyService.editReply(
+                replyId,
+                userId,
+                0,
+                "Edited content"
+        );
+
+        var reply = jdbcTemplate.queryForMap(
+                """
+                SELECT content, status, version
+                FROM reply
+                WHERE id = ?
+                """,
+                replyId
+        );
+
+        assertThat(reply.get("content"))
+                .isEqualTo("Edited content");
+
+        assertThat(reply.get("status"))
+                .isEqualTo("NORMAL");
+
+        assertThat(((Number) reply.get("version")).intValue())
+                .isEqualTo(1);
+
+        Integer eventCount = jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM outbox_event
+                WHERE aggregate_type = 'REPLY'
+                  AND aggregate_id = ?
+                  AND event_type = 'ReplyEdited'
+                """,
+                Integer.class,
+                replyId
+        );
+
+        assertThat(eventCount).isEqualTo(1);
+    }
+
+    @Test
+    void rejectsStaleReplyEdit() {
+        createdTopicId = topicService.createTopic(
+                categoryId,
+                userId,
+                "Version test topic",
+                "Original content"
+        );
+
+        Long replyId = jdbcTemplate.queryForObject(
+                """
+                SELECT id
+                FROM reply
+                WHERE topic_id = ?
+                  AND floor_no = 1
+                """,
+                Long.class,
+                createdTopicId
+        );
+
+        replyService.editReply(
+                replyId,
+                userId,
+                0,
+                "First edit"
+        );
+
+        assertThatThrownBy(() ->
+                replyService.editReply(
+                        replyId,
+                        userId,
+                        0,
+                        "Stale edit"
+                )
+        )
+                .isInstanceOf(ApiException.class)
+                .satisfies(exception -> {
+                    ApiException apiException =
+                            (ApiException) exception;
+
+                    assertThat(apiException.getStatus().value())
+                            .isEqualTo(409);
+
+                    assertThat(apiException.getCode())
+                            .isEqualTo(
+                                    "FORUM_REPLY_VERSION_CONFLICT"
+                            );
+                });
+
+        String content = jdbcTemplate.queryForObject(
+                """
+                SELECT content
+                FROM reply
+                WHERE id = ?
+                """,
+                String.class,
+                replyId
+        );
+
+        assertThat(content).isEqualTo("First edit");
+    }
+
+    @Test
+    void softDeletesReplyWithoutRemovingItsFloor() {
+        createdTopicId = topicService.createTopic(
+                categoryId,
+                userId,
+                "Delete test topic",
+                "Content to delete"
+        );
+
+        Long replyId = jdbcTemplate.queryForObject(
+                """
+                SELECT id
+                FROM reply
+                WHERE topic_id = ?
+                  AND floor_no = 1
+                """,
+                Long.class,
+                createdTopicId
+        );
+
+        replyService.deleteReply(
+                replyId,
+                userId,
+                0
+        );
+
+        var reply = jdbcTemplate.queryForMap(
+                """
+                SELECT floor_no, status, version
+                FROM reply
+                WHERE id = ?
+                """,
+                replyId
+        );
+
+        assertThat(((Number) reply.get("floor_no")).intValue())
+                .isEqualTo(1);
+
+        assertThat(reply.get("status"))
+                .isEqualTo("DELETED");
+
+        assertThat(((Number) reply.get("version")).intValue())
+                .isEqualTo(1);
+    }
+
+    @Test
+    void readsTwentyVisibleRepliesAcrossDeletedFloorsInBothModes() {
+        createdTopicId = topicService.createTopic(
+                categoryId,
+                userId,
+                "Reply pagination topic",
+                "First floor"
+        );
+
+        Set<Integer> deletedFloors = Set.of(2, 5, 10, 15, 20, 25);
+
+        for (int floor = 2; floor <= 27; floor++) {
+            jdbcTemplate.update(
+                    """
+                    INSERT INTO reply (
+                        id, topic_id, floor_no, user_id, content, status, version
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, 0)
+                    """,
+                    idGenerator.nextId(),
+                    createdTopicId,
+                    floor,
+                    userId,
+                    "Reply at floor " + floor,
+                    deletedFloors.contains(floor) ? "DELETED" : "NORMAL"
+            );
+        }
+
+        jdbcTemplate.update(
+                "UPDATE topic SET max_floor = 27 WHERE id = ?",
+                createdTopicId
+        );
+
+        ReplyPage normalPage =
+                replyQueryService.readReplies(createdTopicId, null);
+
+        assertThat(normalPage.replies()).hasSize(20);
+        assertThat(normalPage.replies())
+                .extracting(ReplyView::floorNo)
+                .doesNotContainAnyElementsOf(deletedFloors);
+        assertThat(normalPage.replies().get(19).floorNo()).isEqualTo(26);
+        assertThat(normalPage.hasNext()).isTrue();
+        assertThat(normalPage.nextCursor()).isEqualTo(26);
+
+        ReplyPage nextNormalPage =
+                replyQueryService.readReplies(
+                        createdTopicId,
+                        normalPage.nextCursor()
+                );
+
+        assertThat(nextNormalPage.replies())
+                .extracting(ReplyView::floorNo)
+                .containsExactly(27);
+        assertThat(nextNormalPage.hasNext()).isFalse();
+
+        ReplyPage authorPage =
+                replyQueryService.readAuthorReplies(createdTopicId, null);
+
+        assertThat(authorPage.replies())
+                .extracting(ReplyView::floorNo)
+                .containsExactlyElementsOf(
+                        normalPage.replies()
+                                .stream()
+                                .map(ReplyView::floorNo)
+                                .toList()
+                );
+        assertThat(authorPage.hasNext()).isTrue();
+        assertThat(authorPage.nextCursor()).isEqualTo(26);
+    }
 
 }

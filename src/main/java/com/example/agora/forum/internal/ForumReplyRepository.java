@@ -43,4 +43,12 @@ public class ForumReplyRepository {
 
         return OptionalInt.of(floorNo);
     }
+
+    public boolean updateReplyContent(long replyId, long userId, int expectedVersion, String content) {
+        return mapper.updateReplyContent(replyId, userId, expectedVersion, content) == 1;
+    }
+
+    public boolean softDeleteReply(long replyId, long userId, int expectedVersion) {
+        return mapper.softDeleteReply(replyId, userId, expectedVersion) == 1;
+    }
 }
