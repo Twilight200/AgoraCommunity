@@ -5,7 +5,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 
 @SpringBootApplication
-@ConfigurationPropertiesScan(basePackages = "com.example.agora.platform.internal")
+@ConfigurationPropertiesScan(basePackages = {"com.example.agora.platform.internal"})
 public class AgoraApplication {
 
     public static void main(String[] args) {

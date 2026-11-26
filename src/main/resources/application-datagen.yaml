@@ -1,0 +1,13 @@
+spring:
+  config:
+    activate:
+      on-profile: datagen
+
+agora:
+  datagen:
+    seed: 20261126
+    marker: datagen_20261126_
+    user-count: 5
+    category-count: 3
+    topic-count: 10
+    replies-per-topic: 3
