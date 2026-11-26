@@ -1,8 +1,8 @@
 <template>
   <div class="not-found">
-    <span>404</span>
+    <strong aria-hidden="true">404</strong>
     <h1>页面不存在</h1>
-    <RouterLink to="/">返回概览</RouterLink>
+    <RouterLink class="button button-secondary" to="/">返回首页</RouterLink>
   </div>
 </template>
 

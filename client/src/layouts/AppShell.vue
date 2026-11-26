@@ -2,40 +2,32 @@
   <div class="app-shell">
     <aside class="sidebar" aria-label="主导航">
       <RouterLink class="brand" to="/" aria-label="Agora 首页">
-        <span class="brand-mark">A</span>
-        <span>agora</span>
+        <span class="brand-mark" aria-hidden="true">A</span>
+        <span>Agora</span>
       </RouterLink>
 
-      <div class="workspace-label">浏览</div>
       <nav class="nav-list">
-        <RouterLink class="nav-item" to="/" :class="{ active: route.name === 'home' }">
-          <span class="nav-icon" aria-hidden="true">⌂</span>
-          <span>首页</span>
+        <RouterLink class="nav-item" to="/" :class="{ active: route.name === 'home' }" aria-label="首页">
+          <AppIcon name="home" /><span>首页</span>
         </RouterLink>
-        <a class="nav-item nav-item-muted" href="#topics"><span class="nav-icon" aria-hidden="true">#</span><span>节点</span></a>
-        <a class="nav-item nav-item-muted" href="#saved"><span class="nav-icon" aria-hidden="true">☆</span><span>已收藏</span></a>
-      </nav>
-
-      <div class="workspace-label workspace-label-spaced">你的空间</div>
-      <nav class="nav-list">
-        <a class="nav-item nav-item-muted" href="#notifications"><span class="nav-icon" aria-hidden="true">◌</span><span>通知</span><span class="nav-count">0</span></a>
+        <RouterLink class="nav-item" to="/categories" :class="{ active: route.name === 'categories' || route.name === 'topic' || route.name === 'compose' }" aria-label="板块">
+          <AppIcon name="hash" /><span>板块</span>
+        </RouterLink>
+        <a class="nav-item" href="#saved" aria-label="已收藏"><AppIcon name="star" /><span>已收藏</span></a>
+        <a class="nav-item" href="#notifications" aria-label="通知"><AppIcon name="bell" /><span>通知</span></a>
       </nav>
 
       <div class="sidebar-bottom">
-        <div class="connection-status"><span class="status-dot"></span>服务连接正常</div>
-        <button class="profile-button" type="button" aria-label="当前用户">
-          <span class="avatar">访</span>
-          <span class="profile-copy"><strong>访客</strong><small>未登录</small></span>
-          <span class="profile-menu" aria-hidden="true">···</span>
+        <RouterLink v-if="!sessionUsername" class="profile-button" to="/login" aria-label="登录或注册">
+          <span class="avatar" aria-hidden="true">访</span><span>登录</span>
+        </RouterLink>
+        <button v-else class="profile-button" type="button" aria-label="退出登录" @click="signOut">
+          <span class="avatar" aria-hidden="true">{{ sessionUsername.slice(0, 1) }}</span><span>{{ sessionUsername }}</span><span class="signout-label">退出</span>
         </button>
       </div>
     </aside>
 
     <main class="main-area">
-      <header class="topbar">
-        <div class="breadcrumbs"><span>Agora</span><span class="crumb-divider">/</span><strong>{{ route.meta.title }}</strong></div>
-        <div class="topbar-actions"><span class="environment-tag">开发环境</span><button class="icon-button" type="button" aria-label="通知" title="通知">♧</button></div>
-      </header>
       <RouterView />
     </main>
   </div>
@@ -43,6 +35,9 @@
 
 <script setup lang="ts">
 import { useRoute, RouterLink, RouterView } from 'vue-router'
+import AppIcon from '../components/AppIcon.vue'
+import { logout, sessionUsername } from '../api/client'
 
 const route = useRoute()
+async function signOut() { try { await logout() } catch { /* Local session is cleared even when the API is unavailable. */ } }
 </script>
